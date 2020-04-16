@@ -1,0 +1,108 @@
+#!/usr/bin/python
+
+import re, sys, os
+from collections import defaultdict
+import pandas as pd
+import argparse
+import numpy as np
+
+def parse_gff3_file():
+	gff = defaultdict(str)
+	gff3_file = "../../lib/PhytozomeV12/Creinhardtii/annotation/Creinhardtii_281_v5.5.gene.gff3"
+	with open(gff3_file, "r") as fIN:
+		for line in fIN:
+			if not(line.startswith("#")):
+				line = line.rstrip("\n")
+				data = line.split("\t")
+				if (data[2] == "gene"):
+					coord = "{}:{}-{}".format(data[0],data[3],data[4])
+					gene = re.search(r'ID=(.*).v5.5(.*)',data[8])
+					geneID = gene.group(1)
+					gff[geneID] = coord
+	return gff
+
+def parse_timepoints():
+	tpDict = defaultdict(dict)
+	timepoints_file = "../data/timepoints.txt"
+	common_path = "/scratch/gslab/mpandey/Chlamy_SS_model/runs/sorted_bamFiles/"	
+	#fout = open(outFilename, "w")
+	with open(timepoints_file, "r") as fIN:
+		for line in fIN:
+			line = line.rstrip("\n")
+			data = line.split("\t")
+			f2_path = "{}/{}".format(common_path,data[1])
+			for i,val in enumerate(list(["A", "B"])):
+				smID = "TP{}{}".format(data[2],val)
+				fpath = "{}/{}.bam".format(common_path,data[i])	
+				tpDict["TP_{}".format(data[2])][smID] = fpath
+	return tpDict
+
+def parse_PSI_values(filename):
+	df1 = pd.read_csv(filename, sep=",")
+	df1 = df1.set_index("ClusterID")
+	#print(df1)
+	tp_df = df1.drop(["clusterNum"], axis = 1)
+	#print(tp_df) 
+	clusterMax = tp_df.idxmax(axis = 1)
+	tp_df["min_TP"] = tp_df[tp_df > 0].idxmin(axis = 1)
+	tp_df["max_TP"] = clusterMax
+	sub_df = tp_df[["min_TP", "max_TP"]]
+	dfDict = sub_df.to_dict('index')
+	return dfDict
+
+def updated_parser_for_PSI_values(filename):
+	with open(filename, "r") as fIN:
+		for line in fIN:
+			if not(line.startswith("\"ClusterID\"")):
+				data = line.split(",")
+				a = map(float,data[1:])
+				print(a,np.nonzero(a))
+				#minval = np.min(a[np.nonzero(a)])
+				#maxval = np.max(a[np.nonzero(a)])
+				#print(minval, maxval)
+				
+			
+if (__name__ == "__main__"):
+	#parser = argparse.ArgumentParser(prog = "Enter the input for ggsashimi")
+	#parser.add_argument('-psifile', dest="psifile", help="Input PSI file")
+	inputType = "Dark"
+	tpDict = parse_timepoints()
+	#print(tpDict.keys())
+	geneList = list()	
+	filename = "../output/Clustering_Output/181025_PSI_{}_Set1.csv".format(inputType)
+	psiTP = parse_PSI_values(filename)
+	updated_parser_for_PSI_values(filename)
+	geneTP = defaultdict(dict)
+	for tmpid in psiTP:
+		lsvid = tmpid.split("@")
+		genetmp = re.search(r'(.*).v5.5(.*)', lsvid[0])
+		geneID = genetmp.group(1)
+		if (geneID not in geneList):
+			geneList.append(geneID)
+		geneTP[geneID][lsvid[0]] = psiTP[tmpid]
+		print(lsvid[0], psiTP[tmpid])
+	
+	gffIDs = parse_gff3_file()
+
+	cmd_file = "../plots/r02_{}_set1_cmdline.sh".format(inputType)
+	cmdOut = open(cmd_file, "w")
+	for geneID in geneList:
+		coord = gffIDs[geneID]
+		tsvName = "../plots/{}_Set1_Input/{}_input.tsv".format(inputType,geneID)
+		fout = open(tsvName, "w")
+		for lsvid in geneTP[geneID]:
+			lightTP = geneTP[geneID][lsvid]["min_TP"]
+			darkTP = geneTP[geneID][lsvid]["max_TP"]
+			for tID in tpDict[lightTP]:
+				if (inputType == "Light"):
+					fout.write("{}\t{}\tDark\tBlue\n".format(tID, tpDict[lightTP][tID]))
+				else:
+					fout.write("{}\t{}\tLight\tOrange\n".format(tID, tpDict[lightTP][tID]))
+			for tID in tpDict[darkTP]:
+				if (inputType == "Light"):
+					fout.write("{}\t{}\tLight\tOrange\n".format(tID, tpDict[darkTP][tID]))
+				else:
+					fout.write("{}\t{}\tDark\tBlue\n".format(tID, tpDict[darkTP][tID]))
+		fout.close()
+		cmdOut.write("./Mod_sashimi-plot_v01.py -b {} -c {} -o ./Updated_{}_Set1/{} -O 3 -C 4 -P pallet.txt -L 1 -A mean\n".format(tsvName,coord,inputType,geneID))		
+		#cmdOut.write("./Mod_sashimi-plot_v01.py -b ./timepoints_file.tsv -c {} -o ./Updated_Light_Set1/{} -O 3 -M 2 -C 4 -P pallet.txt -L 1 -A mean\n".format(coord,geneID))		

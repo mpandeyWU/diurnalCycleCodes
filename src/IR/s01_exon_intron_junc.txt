@@ -1,0 +1,44 @@
+##########################################################
+#	Purpose: Get Exon-Intron junction mapping sequence
+#	Author: Modified and adapted for Chlamydomonas from Biostar link: https://www.biostars.org/p/325994/
+##########################################################
+
+Load required modules
+
+module load bedops
+module load bedtools
+module load samtools
+
+Step 1: Get exon coordinates from the GTF file
+
+awk '($3=="exon")' /scratch/gslab/mpandey/lib/PhytozomeV12/Creinhardtii/annotation/Chlamy_gene_exons.gtf | gtf2bed - | cut -f1-6 - > s01_output/a01_Chlamy_exons.bed
+
+Step 2: Convert transcripts to merged exons
+
+awk -f r01_transcripts2MergedExons.awk s01_output/a01_Chlamy_exons.bed > s01_output/a02_Chlamy_mergedExons.bed
+
+Step 3: Make an Exon - Intron list
+
+awk -f r02_mergedExons_to_IntronList.awk s01_output/a02_Chlamy_mergedExons.bed > s01_output/a03_Chlamy_ExonsandIntrons.bed
+
+Step 4: Convert them into junctions
+
+awk -f r03_exonIntronList_to_junctionList.awk s01_output/a03_Chlamy_ExonsandIntrons.bed > s01_output/a04_Chlamy_exonsIntronJunctions.bed
+
+Step 5: Pad the exon-intron junction by 10bp around the junction
+
+bedops --everything --range 10 s01_output/a04_Chlamy_exonsIntronJunctions.bed > s01_output/a05_Chlamy_exonsIntronJunctions.pad10.bed
+
+Step 6: Convert sorted bamfiles to bedfiles
+(all commands in run_01.sh)
+convert2bed -i bam -o bed < ../runs/sorted_bamFiles/SRR2132402.bam > ../runs/bedfiles/SRR2132402.bed
+
+Step 7: Run bedtools intersect to get intron-exon junction mapping hits
+First half of the command get all reads that map to the splice site including the spliced reads -> second half of the command get rid of spliced reads.
+
+bedtools intersect -a s01_output/a05_Chlamy_exonsIntronJunctions.pad10.bed -b tmp/TP_12.5.bed -f 1.0 -wo | awk -F "\t" '!($14 ~ /N/) {print $0;}' > filtered_1.bed
+
+
+Command line to get pre-terminated hits during sbatch run
+
+grep -i 'error' slurm-15150057_* | awk -F ":" '{print $1}' | sort | uniq | xargs cat | grep 'Command:' | awk -F ": " '{print $2}' > highMem_needcmd.sh
